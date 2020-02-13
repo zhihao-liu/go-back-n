@@ -46,10 +46,11 @@ typedef struct {
 typedef struct state_t{
 
 	/* TODO: Your state information could be encoded here. */
-
+    // window size
 } state_t;
 
 enum {
+//    state of state machine    sender?
 	CLOSED=0,
 	SYN_SENT,
 	SYN_RCVD,
