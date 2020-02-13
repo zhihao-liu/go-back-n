@@ -46,10 +46,11 @@ int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 
 int gbn_listen(int sockfd, int backlog){
 
+    // TODO: check backlog >1?
 	/* TODO: Your code here. */
 	s.state = LISTENING;
 
-	return(-1);
+	return(0);
 }
 
 int gbn_bind(int sockfd, const struct sockaddr *server, socklen_t socklen){
@@ -70,7 +71,12 @@ int gbn_socket(int domain, int type, int protocol){
 int gbn_accept(int sockfd, struct sockaddr *client, socklen_t *socklen){
 
 	/* TODO: Your code here. */
-
+    if (s.state == LISTENING) {
+        maybe_recvfrom(sockfd, );
+        // fill client;
+        int newSockfd = gbn_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        return newSockfd;
+    }
 	return(-1);
 }
 
