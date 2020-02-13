@@ -46,11 +46,13 @@ typedef struct {
 typedef struct state_t{
 
 	/* TODO: Your state information could be encoded here. */
-
+	int state;
+	size_t windoSize;
 } state_t;
 
 enum {
 	CLOSED=0,
+	LISTENING,
 	SYN_SENT,
 	SYN_RCVD,
 	ESTABLISHED,

@@ -34,8 +34,7 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags){
 int gbn_close(int sockfd){
 
 	/* TODO: Your code here. */
-
-	return(-1);
+	return close(sockfd);
 }
 
 int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
@@ -48,6 +47,7 @@ int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 int gbn_listen(int sockfd, int backlog){
 
 	/* TODO: Your code here. */
+	s.state = LISTENING;
 
 	return(-1);
 }
@@ -55,8 +55,7 @@ int gbn_listen(int sockfd, int backlog){
 int gbn_bind(int sockfd, const struct sockaddr *server, socklen_t socklen){
 
 	/* TODO: Your code here. */
-
-	return(-1);
+	return bind(sockfd, server, socklen);
 }	
 
 int gbn_socket(int domain, int type, int protocol){
@@ -65,8 +64,7 @@ int gbn_socket(int domain, int type, int protocol){
 	srand((unsigned)time(0));
 	
 	/* TODO: Your code here. */
-
-	return(-1);
+	return socket(domain, type, protocol);
 }
 
 int gbn_accept(int sockfd, struct sockaddr *client, socklen_t *socklen){
