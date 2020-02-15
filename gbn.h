@@ -43,8 +43,7 @@ typedef struct {
     uint8_t data[DATALEN];    /* pointer to the payload                     */
 } __attribute__((packed)) gbnhdr;
 
-typedef struct state_t{
-
+typedef struct state_t {
 	/* TODO: Your state information could be encoded here. */
 	int state;
 	size_t windoSize;
