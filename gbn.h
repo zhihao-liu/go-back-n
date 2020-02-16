@@ -58,10 +58,13 @@ typedef struct state_t {
 
 enum {
 	CLOSED=0,
-	LISTENING,
-	CONNECTING,	/* Connection attempt started, waiting to send SYN */
-	SYN_SENT, 	/* SYN sent, waiting to receive SYNACK */
-	SYN_RCVD, 	/* SYNACK received, waiting to send echo SYNACK */
+	LISTENING,  /* Server-only: listening to incoming connection attempts */
+	SYN_WAIT,   /* Client: connection attempt started, waiting to send SYN
+				   Server: accepting incoming connection attempt, waiting to receive SYN */
+	SYN_SENT, 	/* Client: SYN sent, waiting to receive SYNACK
+				   Server: SYNACK sent, waiting to receive echo SYNACK */
+	SYN_RCVD, 	/* Client: SYNACK received, waiting to send echo SYNACK 
+	  			   Server: SYN received, waiting to send SYNACK */
 	ESTABLISHED,
 	FIN_SENT,
 	FIN_RCVD
