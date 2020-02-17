@@ -111,7 +111,7 @@ static void receive_echo_synack(int sockfd, gbnhdr *synack_pac) {
 		return;
 	}
 
-	printf("Echo SYNACK successfully received. Connection establishe\n");
+	printf("Echo SYNACK successfully received. Connection established\n");
 	s.state = ESTABLISHED;
 	alarm(0);
 }
@@ -253,7 +253,7 @@ int gbn_accept(int sockfd, sockaddr *client, socklen_t *socklen) {
 		}
 	}
 	
-	return (s.state == ESTABLISHED ? 0 : -1);
+	return (s.state == ESTABLISHED ? sockfd : -1);
 }
 
 ssize_t maybe_recvfrom(int s, char *buf, size_t len, int flags, sockaddr *from, socklen_t *fromlen) {
