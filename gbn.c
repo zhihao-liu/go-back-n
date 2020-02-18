@@ -15,7 +15,7 @@ static uint16_t checksum_packet(const gbnhdr *packet) {
 	return checksum((uint16_t *)buf, sizeof(buf) / sizeof(uint16_t));
 }
 
-static bool validate(const gbnhdr *packet) {
+static int validate(const gbnhdr *packet) {
 	return checksum_packet(packet) == packet->checksum;
 }
 
@@ -53,7 +53,7 @@ static int recv_synack(int sockfd) {
 	}
 
 	if (!validate(&pac) || pac.type != SYNACK || pac.seqnum != next(s.seqnum)) {
-		/* Expected SYNACK not received, maintain current state to retry */
+		/* Expected SYNACK not received, maintain current state to keep waiting */
 		return 0;
 	}
 
@@ -85,7 +85,7 @@ static int recv_syn(int sockfd) {
 }
 
 static int send_synack(int sockfd) {
-	gbnhdr pac = {SYNACK, s.seqnum, };
+	gbnhdr pac = {SYNACK, s.seqnum,};
 	pac.checksum = checksum_packet(&pac);
 
 	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, &s.remote, s.socklen) == -1) {
@@ -96,6 +96,47 @@ static int send_synack(int sockfd) {
 	printf("SYNACK %d successfully sent\n", s.seqnum);
 	printf("Connection Established\n");
 	s.state = ESTABLISHED;
+	return 0;
+}
+
+static int send_fin(int sockfd) {
+	gbnhdr pac = {FIN, s.seqnum,};
+	pac.checksum = checksum_packet(&pac);
+
+	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, &s.remote, s.socklen) == -1) {
+		printf("ERROR: Unknown error sending FIN %d\n", s.seqnum);
+		return -1;
+	}
+
+	printf("FIN %d successfully sent\n", s.seqnum);
+	s.state = FIN_SENT;
+	alarm(TIMEOUT);
+	return 0;
+}
+
+static int recv_finack(int sockfd) {
+	gbnhdr pac = {EMPTY,};
+
+	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
+		if (errno == EINTR) {
+			printf("WARN: Timeout waiting for FINACK %d\n", next(s.seqnum));
+			s.state = ESTABLISHED;
+			errno = 0;
+			return 0;
+		} else {
+			printf("ERROR: Unknown error receiving SYNACK %d\n", next(s.seqnum));
+			return -1;
+		}
+	}
+
+	if (!validate(&pac) || pac.type != FINACK || pac.seqnum != next(s.seqnum)) {
+		/* Expected FINACK not received, maintain current state to keep waiting */
+		return 0;
+	}
+
+	printf("FINACK %d successfully received\n", next(s.seqnum));
+	s.state = CLOSED;
+	alarm(0);
 	return 0;
 }
 
@@ -132,7 +173,7 @@ static int send_window(int sockfd, const gbnhdr *window, size_t n) {
 
 static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
 	int n_ack = 0;
-	gbnhdr pac;
+	gbnhdr pac = {EMPTY,};
 
 	while (n_ack < n) {
 		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
@@ -216,23 +257,28 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 	/* Your code here. */
-	gbnhdr pac;
-	gbnhdr ack_pac = {DATAACK};
+	gbnhdr pac = {EMPTY,};
+	gbnhdr ack_pac = {DATAACK,};
 
-	bool received = false;
+	int received = FALSE;
 	while (!received) {
 		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 			printf("ERROR: Unknown error receiving packet\n");
 			return -1;
 		}
 
-		if (!validate(&pac) || pac.type != DATA) {
-			continue;
+		if (!validate(&pac)) continue;
+
+		if (pac.type == FIN && pac.seqnum == s.seqnum) {
+			s.state = FIN_RCVD;
+			break;
 		}
+
+		if (pac.type != DATA) continue;
 
 		if (pac.seqnum == s.seqnum) {
 			printf("Packet %d received\n", s.seqnum);
-			received = true;
+			received = TRUE;
 			++s.seqnum;
 		}
 
@@ -245,19 +291,59 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 		}
 	}
 
+	if (s.state == FIN_RCVD) {
+		++s.seqnum;
+		gbnhdr finack_pac = {FINACK, s.seqnum};
+		finack_pac.checksum = checksum_packet(&finack_pac);
+
+		if (maybe_sendto(sockfd, &finack_pac, sizeof(finack_pac), 0, &s.remote, s.socklen) == -1) {
+			printf("ERROR: Unknown error sending FINACK %d\n", s.seqnum);
+			return -1;
+		}
+
+		return 0;
+	}
+
 	memcpy(buf, pac.data, pac.data_len);
 	return pac.data_len;
 }
 
 int gbn_close(int sockfd) {
+	/* Your code here. */
+	if (s.is_client) {
+		int attempts = 0;
 
-	/* TODO: Your code here. */
+		while (s.state != CLOSED) {
+			switch (s.state) {
+				case ESTABLISHED: {
+					if (++attempts > MAX_CONN) {
+						printf("ERROR: Exceeded maximum number of disconnection attempts\n");
+						return -1;
+					};
+
+					if (send_fin(sockfd) == -1) return -1;
+					break;
+				}
+				case FIN_SENT: {
+					if (recv_finack(sockfd) == -1) return -1;
+					break;
+				}
+				default: {
+					return -1;
+				}
+			}
+		}
+	}
+
+	printf("Connection closed\n");
+	s.state = CLOSED;
 	return close(sockfd);
 }
 
 int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	/* Your code here. */
 	printf("Attempting to connect...\n");
+	s.is_client = TRUE;
 	s.remote = *server;
 	s.socklen = socklen;
 	s.state = SYN_WAIT;
@@ -268,8 +354,7 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 			case SYN_WAIT: {
 				if (++attempts > MAX_CONN) {
 					printf("ERROR: Exceeded maximum number of connection attempts\n");
-					s.state = CLOSED;
-					break;
+					return -1;
 				};
 
 				if (send_syn(sockfd) == -1) return -1;
@@ -318,6 +403,7 @@ int gbn_accept(int sockfd, sockaddr *client, socklen_t *socklen) {
 	if (s.state != LISTENING) return -1;
 
 	printf("Accepting incoming connection...\n");
+	s.is_client = FALSE;
 	s.socklen = sizeof(s.remote);
 	s.state = SYN_WAIT;
 

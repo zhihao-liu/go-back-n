@@ -9,7 +9,6 @@
 #include<fcntl.h>
 #include<stdio.h>
 #include<stdlib.h>
-#include<stdbool.h>
 #include<string.h>
 #include<netinet/in.h>
 #include<errno.h>
@@ -20,6 +19,8 @@ typedef struct sockaddr sockaddr;
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
+#define TRUE 1
+#define FALSE 0
 
 /*----- Error variables -----*/
 extern int h_errno;
@@ -29,13 +30,13 @@ extern int errno;
 #define DEBUG 0
 
 /*----- Protocol parameters -----*/
-#define LOSS_PROB 1e-2    /* loss probability                            */
-#define CORR_PROB 1e-3    /* corruption probability                      */
-#define DATALEN   1024    /* length of the payload                       */
-#define N         1024    /* max number of packets a single call to gbn_send can process */
-#define TIMEOUT      1    /* timeout to resend packets (1 second)        */
-#define MAX_CONN    10    /* max number of connection attempts           */
-#define MAX_WINDOW   1    /* max window size							 */
+#define LOSS_PROB 1e-2    /* loss probability												*/
+#define CORR_PROB 1e-3    /* corruption probability											*/
+#define DATALEN   1024    /* length of the payload      					                */
+#define N         1024    /* max number of packets a single call to gbn_send can process 	*/
+#define TIMEOUT      1    /* timeout to resend packets (1 second)        					*/
+#define MAX_CONN    10    /* max number of connection/disconnection attempts           		*/
+#define MAX_WINDOW   1    /* max window size							 					*/
 
 /*----- Packet types -----*/
 #define EMPTY   -1
@@ -57,7 +58,8 @@ typedef struct {
 } __attribute__((packed)) gbnhdr;
 
 typedef struct state_t {
-	/* TODO: Your state information could be encoded here. */
+	/* Your state information could be encoded here. */
+	int is_client;
 	sockaddr remote;
 	socklen_t socklen;	
 	uint8_t state;
