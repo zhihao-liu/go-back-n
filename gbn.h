@@ -29,9 +29,9 @@ extern int errno;
 #define LOSS_PROB 1e-2    /* loss probability                            */
 #define CORR_PROB 1e-3    /* corruption probability                      */
 #define DATALEN   1024    /* length of the payload                       */
-#define N         1024    /* Max number of packets a single call to gbn_send can process */
+#define N         1024    /* max number of packets a single call to gbn_send can process */
 #define TIMEOUT      1    /* timeout to resend packets (1 second)        */
-#define MAX_ATTEMPTS  5
+#define MAX_CONN    10    /* max number of connection attempts           */
 
 /*----- Packet types -----*/
 #define EMPTY   -1
@@ -55,7 +55,7 @@ typedef struct state_t {
 	/* TODO: Your state information could be encoded here. */
 	uint8_t state;
 	uint8_t seqnum;
-	size_t windoSize;
+	size_t windowSize;
 } state_t;
 
 enum {

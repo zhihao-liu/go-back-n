@@ -145,8 +145,8 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	while (s.state != CLOSED && s.state != ESTABLISHED) {
 		switch (s.state) {
 			case SYN_WAIT: {
-				if (++attempts > MAX_ATTEMPTS) {
-					printf("ERROR: Exceeded maximum number of attempts to resend SYN\n");
+				if (++attempts > MAX_CONN) {
+					printf("ERROR: Exceeded maximum number of connection attempts\n");
 					s.state = CLOSED;
 					break;
 				};
