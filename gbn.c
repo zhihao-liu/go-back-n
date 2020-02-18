@@ -3,117 +3,100 @@
 state_t s;
 
 /* Static helper functions */
-static int validate(gbnhdr *packet) {
-	uint16_t *buf = (uint16_t *) packet->data;
-	uint16_t cs = checksum(buf, sizeof(*buf) / sizeof(uint16_t));
-	return cs == packet->checksum;
+static uint16_t checksum_packet(const gbnhdr *packet) {
+	uint8_t buf[DATALEN + 2];
+	buf[0] = packet->type;
+	buf[1] = packet->seqnum;
+	memcpy(buf + 2, packet->data, DATALEN);
+	return checksum((uint16_t *)buf, sizeof(buf) / sizeof(uint16_t));
+}
+
+static bool validate(const gbnhdr *packet) {
+	return checksum_packet(packet) == packet->checksum;
 }
 
 static void timeout_handler(int signum) {}
 
-static void send_syn(int sockfd, const gbnhdr *syn_pac, const sockaddr *server, socklen_t socklen) {
-	if (maybe_sendto(sockfd, syn_pac, sizeof(*syn_pac), 0, server, socklen) == -1) {
-		printf("ERROR: Failed to send SYN\n");
+static void send_syn(int sockfd, const sockaddr *server, socklen_t socklen) {
+	s.seqnum = rand();
+	gbnhdr pac = {SYN, s.seqnum,};
+	pac.checksum = checksum_packet(&pac);
+
+	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, server, socklen) == -1) {
+		printf("ERROR: Unknown error sending SYN %d\n", s.seqnum);
 		s.state = CLOSED;
 		return;
 	}
 
-	printf("SYN successfully sent\n");
+	printf("SYN %d successfully sent\n", s.seqnum);
 	s.state = SYN_SENT;
+	alarm(TIMEOUT);
 }
 
-static void receive_syn(int sockfd, gbnhdr *syn_pac, sockaddr *client, socklen_t *socklen) {
-	if (maybe_recvfrom(sockfd, (char *)syn_pac, sizeof(*syn_pac), 0, client, socklen) == -1) {
-		printf("ERROR: Failed to receive SYN\n");
-		s.state = CLOSED;
-		return;
-	}
-
-	if (syn_pac->type != SYN) {
-		printf("WARN: SYN not received\n");
-		return;
-	}
-
-	printf("SYN successfully received\n");
-	s.state = SYN_RCVD;
-}
-
-static void send_synack(int sockfd, const gbnhdr *synack_pac, const sockaddr *client, socklen_t socklen) {
-	if (maybe_sendto(sockfd, synack_pac, sizeof(*synack_pac), 0, client, socklen) == -1) {
-		printf("ERROR: Failed to send SYNACK\n");
-		s.state = CLOSED;
-		return;
-	}
-
-	printf("SYNACK successfully sent\n");
-	s.state = SYN_SENT;
-}
-
-static void receive_synack(int sockfd, gbnhdr *synack_pac) {
+static void recv_synack(int sockfd) {
+	gbnhdr pac = {EMPTY,};
 	sockaddr server;
 	socklen_t socklen = sizeof(server);
 
-	alarm(TIMEOUT);
-	if (maybe_recvfrom(sockfd, (char *)synack_pac, sizeof(*synack_pac), 0, &server, &socklen) == -1) {
+	if (maybe_recvfrom(sockfd, (char *)&pac, sizeof(pac), 0, &server, &socklen) == -1) {
 		if (errno == EINTR) {
-			printf("WARN: Timeout waiting for SYNACK\n");
+			printf("WARN: Timeout waiting for SYNACK %d\n", s.seqnum + 1);
 			s.state = SYN_WAIT;
 			errno = 0;
 		} else {
-			printf("ERROR: Failed to receive SYNACK\n");
+			printf("ERROR: Unknown error receiving SYNACK %d\n", s.seqnum + 1);
 			s.state = CLOSED;
 		}
 		return;
 	}
 
-	if (synack_pac->type != SYNACK) {
-		printf("WARN: SYNACK not received\n");
-		s.state = SYN_WAIT;
+	if (!validate(&pac) || pac.type != SYNACK || pac.seqnum != s.seqnum + 1) {
+		if (!validate(&pac)) printf("CORRUPT");
+		printf("%d", pac.type);
+		printf("%d", pac.seqnum);
+		/* Expected SYNACK not received, maintain current state to retry */
 		return;
 	}
 
-	printf("SYNACK successfully received\n");
-	s.state = SYN_RCVD;
+	printf("SYNACK %d successfully received\n", s.seqnum + 1);
+	printf("Connection Established\n");
+	s.state = ESTABLISHED;
+	++s.seqnum;
 	alarm(0);
 }
 
-static void send_echo_synack(int sockfd, const gbnhdr *synack_pac, const sockaddr *server, socklen_t socklen) {
-	if (maybe_sendto(sockfd, synack_pac, sizeof(*synack_pac), 0, server, socklen) == -1) {
-		printf("ERROR: Failed to send echo SYNACK\n");
+static void recv_syn(int sockfd, sockaddr *client, socklen_t *socklen) {
+	gbnhdr pac = {EMPTY,};
+
+	if (maybe_recvfrom(sockfd, (char *)&pac, sizeof(pac), 0, client, socklen) == -1) {
+		printf("ERROR: Unknown error receiving SYN\n");
 		s.state = CLOSED;
 		return;
 	}
 
-	printf("Echo SYNACK successfully sent. Connection established\n");
-	s.state = ESTABLISHED;
+	if (!validate(&pac) || pac.type != SYN) {
+		/* SYN not received, maintain current state to keep waiting */
+		return;
+	}
+
+	printf("SYN %d successfully received\n", pac.seqnum);
+	s.state = SYN_RCVD;
+	s.seqnum = pac.seqnum + 1;
 }
 
-static void receive_echo_synack(int sockfd, gbnhdr *synack_pac) {
-	sockaddr client;
-	socklen_t socklen = sizeof(client);
+static void send_synack(int sockfd, const sockaddr *client, socklen_t socklen) {
+	gbnhdr pac = {SYNACK, s.seqnum, };
+	pac.checksum = checksum_packet(&pac);
 
-	alarm(TIMEOUT);
-	if (maybe_recvfrom(sockfd, (char *)synack_pac, sizeof(*synack_pac), 0, &client, &socklen) == -1) {
-		if (errno == EINTR) {
-			printf("WARN: Timeout waiting for echo SYNACK\n");
-			s.state = SYN_RCVD;
-			errno = 0;
-		} else {
-			printf("ERROR: Failed to receive echo SYNACK\n");
-			s.state = CLOSED;
-		}
+	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, client, socklen) == -1) {
+		printf("ERROR: Unknown error sending SYNACK %d\n", s.seqnum);
+		s.state = CLOSED;
 		return;
 	}
 
-	if (synack_pac->type != SYNACK) {
-		printf("WARN: Echo SYNACK not received\n");
-		s.state = SYN_RCVD;
-		return;
-	}
-
-	printf("Echo SYNACK successfully received. Connection established\n");
+	printf("SYNACK %d successfully sent\n", s.seqnum);
+	printf("Connection Established\n");
 	s.state = ESTABLISHED;
-	alarm(0);
 }
 
 /* Implemented interfaces */
@@ -155,10 +138,6 @@ int gbn_close(int sockfd) {
 
 int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	/* Your code here. */
-	gbnhdr syn_pac = {SYN,}; /* SYN to be sent out */
-	gbnhdr synack_pac = {EMPTY,}; /* packet to store the received SYNACK */
-	gbnhdr echo_pac = {SYNACK,}; /* Echo SYNACK to be sent back */
-
 	printf("Attempting to connect...\n");
 	s.state = SYN_WAIT;
 	int attempts = 0;
@@ -172,15 +151,11 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 					break;
 				};
 
-				send_syn(sockfd, &syn_pac, server, socklen);
+				send_syn(sockfd, server, socklen);
 				break;
 			}
 			case SYN_SENT: {
-				receive_synack(sockfd, &synack_pac);
-				break;
-			}
-			case SYN_RCVD: {
-				send_echo_synack(sockfd, &echo_pac, server, socklen);
+				recv_synack(sockfd);
 				break;
 			}
 			default: {
@@ -219,32 +194,17 @@ int gbn_accept(int sockfd, sockaddr *client, socklen_t *socklen) {
 	/* Your code here. */
 	if (s.state != LISTENING) return -1;
 
-	gbnhdr syn_pac = {EMPTY,}; /* packet to store the received SYN */
-	gbnhdr synack_pac = {SYNACK,}; /* SYNACK to be sent back */
-	gbnhdr echo_pac = {EMPTY,}; /* packet to store the received echo SYNACK */
-
 	printf("Accepting incoming connection...\n");
 	s.state = SYN_WAIT;
-	int attempts = 0;
 
 	while (s.state != CLOSED && s.state != ESTABLISHED) {
 		switch (s.state) {
 			case SYN_WAIT: {
-				receive_syn(sockfd, &syn_pac, client, socklen);
+				recv_syn(sockfd, client, socklen);
 				break;
 			}
 			case SYN_RCVD: {
-				if (++attempts > MAX_ATTEMPTS) {
-					printf("ERROR: Exceeded maximum number of attempts to resend SYNACK\n");
-					s.state = CLOSED;
-					break;
-				};
-
-				send_synack(sockfd, &synack_pac, client, *socklen);
-				break;
-			}
-			case SYN_SENT: {
-				receive_echo_synack(sockfd, &echo_pac);
+				send_synack(sockfd, client, *socklen);
 				break;
 			}
 			default: {
