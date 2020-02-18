@@ -237,6 +237,7 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 		}
 
 		ack_pac.seqnum = s.seqnum;
+		ack_pac.data_len = pac.data_len;
 		ack_pac.checksum = checksum_packet(&ack_pac);
 		if (maybe_sendto(sockfd, &ack_pac, sizeof(ack_pac), 0, &s.remote, s.socklen) == -1) {
 			printf("ERROR: Unknown error sending ACK %d\n", s.seqnum);
