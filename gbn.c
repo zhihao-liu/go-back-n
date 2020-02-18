@@ -17,45 +17,40 @@ static bool validate(const gbnhdr *packet) {
 
 static void timeout_handler(int signum) {}
 
-static void send_syn(int sockfd, const sockaddr *server, socklen_t socklen) {
+static int send_syn(int sockfd) {
 	s.seqnum = rand();
 	gbnhdr pac = {SYN, s.seqnum,};
 	pac.checksum = checksum_packet(&pac);
 
-	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, server, socklen) == -1) {
+	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, &s.remote, s.socklen) == -1) {
 		printf("ERROR: Unknown error sending SYN %d\n", s.seqnum);
-		s.state = CLOSED;
-		return;
+		return -1;
 	}
 
 	printf("SYN %d successfully sent\n", s.seqnum);
 	s.state = SYN_SENT;
 	alarm(TIMEOUT);
+	return 0;
 }
 
-static void recv_synack(int sockfd) {
+static int recv_synack(int sockfd) {
 	gbnhdr pac = {EMPTY,};
-	sockaddr server;
-	socklen_t socklen = sizeof(server);
 
-	if (maybe_recvfrom(sockfd, (char *)&pac, sizeof(pac), 0, &server, &socklen) == -1) {
+	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 		if (errno == EINTR) {
 			printf("WARN: Timeout waiting for SYNACK %d\n", s.seqnum + 1);
 			s.state = SYN_WAIT;
 			errno = 0;
+			return 0;
 		} else {
 			printf("ERROR: Unknown error receiving SYNACK %d\n", s.seqnum + 1);
-			s.state = CLOSED;
+			return -1;
 		}
-		return;
 	}
 
 	if (!validate(&pac) || pac.type != SYNACK || pac.seqnum != s.seqnum + 1) {
-		if (!validate(&pac)) printf("CORRUPT");
-		printf("%d", pac.type);
-		printf("%d", pac.seqnum);
 		/* Expected SYNACK not received, maintain current state to retry */
-		return;
+		return 0;
 	}
 
 	printf("SYNACK %d successfully received\n", s.seqnum + 1);
@@ -63,40 +58,89 @@ static void recv_synack(int sockfd) {
 	s.state = ESTABLISHED;
 	++s.seqnum;
 	alarm(0);
+	return 0;
 }
 
-static void recv_syn(int sockfd, sockaddr *client, socklen_t *socklen) {
+static int recv_syn(int sockfd) {
 	gbnhdr pac = {EMPTY,};
 
-	if (maybe_recvfrom(sockfd, (char *)&pac, sizeof(pac), 0, client, socklen) == -1) {
+	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 		printf("ERROR: Unknown error receiving SYN\n");
-		s.state = CLOSED;
-		return;
+		return -1;
 	}
 
 	if (!validate(&pac) || pac.type != SYN) {
 		/* SYN not received, maintain current state to keep waiting */
-		return;
+		return 0;
 	}
 
 	printf("SYN %d successfully received\n", pac.seqnum);
 	s.state = SYN_RCVD;
 	s.seqnum = pac.seqnum + 1;
+	return 0;
 }
 
-static void send_synack(int sockfd, const sockaddr *client, socklen_t socklen) {
+static int send_synack(int sockfd) {
 	gbnhdr pac = {SYNACK, s.seqnum, };
 	pac.checksum = checksum_packet(&pac);
 
-	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, client, socklen) == -1) {
+	if (maybe_sendto(sockfd, &pac, sizeof(pac), 0, &s.remote, s.socklen) == -1) {
 		printf("ERROR: Unknown error sending SYNACK %d\n", s.seqnum);
-		s.state = CLOSED;
-		return;
+		return -1;
 	}
 
 	printf("SYNACK %d successfully sent\n", s.seqnum);
 	printf("Connection Established\n");
 	s.state = ESTABLISHED;
+	return 0;
+}
+
+static int send_window(int sockfd, const gbnhdr *window, size_t n) {
+	size_t i;
+	for (i = 0; i < n; ++i) {
+		const gbnhdr *pac = &window[i];
+
+		if (maybe_sendto(sockfd, pac, sizeof(*pac), 0, &s.remote, s.socklen) == -1) {
+			printf("ERROR: Unknown error sending packet %d", pac->seqnum);
+			return -1;
+		}
+	}
+
+	alarm(TIMEOUT);
+	return n;
+}
+
+static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
+	int n_ack = 0;
+	gbnhdr pac;
+
+	size_t i;
+	for (i = 0; i < n; ++i) {
+		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
+			printf("ERROR: Unknown error receiving packet");
+		}
+
+		if (pac.seqnum == s.seqnum + 1) {
+			++n_ack;
+			++s.seqnum;
+			*offset += pac.data_len;
+		}
+	}
+
+	alarm(0);
+	return n_ack;
+}
+
+static void speed_up() {
+	if (s.window_size * 2 <= MAX_WINDOW) {
+		s.window_size *= 2;
+	}
+}
+
+static void slow_down() {
+	if (s.window_size / 2 > 0) {
+		s.window_size /= 2;
+	}
 }
 
 /* Implemented interfaces */
@@ -111,8 +155,7 @@ uint16_t checksum(uint16_t *buf, int nwords) {
 }
 
 ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
-	
-	/* TODO: Your code here. */
+	/* Your code here. */
 
 	/* Hint: Check the data length field 'len'.
 	 *       If it is > DATALEN, you will have to split the data
@@ -120,7 +163,32 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 	 *       about getting more than N * DATALEN.
 	 */
 
-	return(-1);
+	gbnhdr window[s.window_size];
+	size_t offset = 0;
+
+	while (offset < len) {
+		size_t n = 0;
+		size_t sent_offset = offset;
+		for (; n < s.window_size && sent_offset < len; ++n) {
+			gbnhdr *pac = &window[n];
+			pac->seqnum = s.seqnum + n;
+			pac->data_len = MIN(DATALEN, len - offset);
+			memcpy(pac->data, buf + sent_offset, pac->data_len);
+			sent_offset += pac->data_len;
+		}
+
+		if (send_window(sockfd, window, n) == -1) return -1;
+
+		int n_ack = recv_window_ack(sockfd, n, &offset);
+		if (n_ack == -1) return -1;
+		if (n_ack == n) {
+			speed_up();
+		} else {
+			slow_down();
+		}
+	}
+
+	return 0;
 }
 
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
@@ -139,10 +207,12 @@ int gbn_close(int sockfd) {
 int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	/* Your code here. */
 	printf("Attempting to connect...\n");
+	s.remote = *server;
+	s.socklen = socklen;
 	s.state = SYN_WAIT;
 	int attempts = 0;
 
-	while (s.state != CLOSED && s.state != ESTABLISHED) {
+	while (s.state != ESTABLISHED) {
 		switch (s.state) {
 			case SYN_WAIT: {
 				if (++attempts > MAX_CONN) {
@@ -151,11 +221,11 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 					break;
 				};
 
-				send_syn(sockfd, server, socklen);
+				if (send_syn(sockfd) == -1) return -1;
 				break;
 			}
 			case SYN_SENT: {
-				recv_synack(sockfd);
+				if (recv_synack(sockfd) == -1) return -1;
 				break;
 			}
 			default: {
@@ -164,7 +234,7 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 		}
 	}
 	
-	return (s.state == ESTABLISHED ? 0 : -1);
+	return 0;
 }
 
 int gbn_listen(int sockfd, int backlog) {
@@ -187,6 +257,9 @@ int gbn_socket(int domain, int type, int protocol) {
 	signal(SIGALRM, timeout_handler);
     siginterrupt(SIGALRM, 1);
 
+	s.state = CLOSED;
+	s.window_size = 1;
+
 	return socket(domain, type, protocol);
 }
 
@@ -195,16 +268,17 @@ int gbn_accept(int sockfd, sockaddr *client, socklen_t *socklen) {
 	if (s.state != LISTENING) return -1;
 
 	printf("Accepting incoming connection...\n");
+	s.socklen = sizeof(s.remote);
 	s.state = SYN_WAIT;
 
-	while (s.state != CLOSED && s.state != ESTABLISHED) {
+	while (s.state != ESTABLISHED) {
 		switch (s.state) {
 			case SYN_WAIT: {
-				recv_syn(sockfd, client, socklen);
+				if (recv_syn(sockfd) == -1) return -1;
 				break;
 			}
 			case SYN_RCVD: {
-				send_synack(sockfd, client, *socklen);
+				if (send_synack(sockfd) == -1) return -1;
 				break;
 			}
 			default: {
@@ -213,17 +287,16 @@ int gbn_accept(int sockfd, sockaddr *client, socklen_t *socklen) {
 		}
 	}
 	
-	return (s.state == ESTABLISHED ? sockfd : -1);
+	return sockfd;
 }
 
-ssize_t maybe_recvfrom(int s, char *buf, size_t len, int flags, sockaddr *from, socklen_t *fromlen) {
-
+ssize_t maybe_recvfrom(int s, void *buf, size_t len, int flags, sockaddr *from, socklen_t *fromlen) {
 	/*----- Packet not lost -----*/
 	if (rand() > LOSS_PROB*RAND_MAX) {
 
-
 		/*----- Receiving the packet -----*/
 		int retval = recvfrom(s, buf, len, flags, from, fromlen);
+		char *buffer = (char *)buf;
 
 		/*----- Packet corrupted -----*/
 		if (rand() < CORR_PROB*RAND_MAX) {
@@ -231,12 +304,12 @@ ssize_t maybe_recvfrom(int s, char *buf, size_t len, int flags, sockaddr *from, 
 			int index = (int)((len-1)*rand()/(RAND_MAX + 1.0));
 
 			/*----- Inverting a bit -----*/
-			char c = buf[index];
+			char c = buffer[index];
 			if (c & 0x01)
 				c &= 0xFE;
 			else
 				c |= 0x01;
-			buf[index] = c;
+			buffer[index] = c;
 		}
 
 		return retval;
@@ -246,10 +319,8 @@ ssize_t maybe_recvfrom(int s, char *buf, size_t len, int flags, sockaddr *from, 
 }
 
 ssize_t maybe_sendto(int s, const void *buf, size_t len, int flags, const sockaddr *to, socklen_t tolen) {
-
     char *buffer = malloc(len);
     memcpy(buffer, buf, len);
-    
     
     /*----- Packet not lost -----*/
     if (rand() > LOSS_PROB*RAND_MAX) {

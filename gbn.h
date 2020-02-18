@@ -18,6 +18,9 @@
 
 typedef struct sockaddr sockaddr;
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 /*----- Error variables -----*/
 extern int h_errno;
 extern int errno;
@@ -32,6 +35,7 @@ extern int errno;
 #define N         1024    /* max number of packets a single call to gbn_send can process */
 #define TIMEOUT      1    /* timeout to resend packets (1 second)        */
 #define MAX_CONN    10    /* max number of connection attempts           */
+#define MAX_WINDOW  32    /* max window size							 */
 
 /*----- Packet types -----*/
 #define EMPTY   -1
@@ -48,14 +52,17 @@ typedef struct {
 	uint8_t  type;            /* packet type (e.g. SYN, DATA, ACK, FIN)     */
 	uint8_t  seqnum;          /* sequence number of the packet              */
     uint16_t checksum;        /* header and payload checksum                */
+	uint16_t data_len;        /* length of actually filled data				*/
     uint8_t data[DATALEN];    /* pointer to the payload                     */
 } __attribute__((packed)) gbnhdr;
 
 typedef struct state_t {
 	/* TODO: Your state information could be encoded here. */
+	sockaddr remote;
+	socklen_t socklen;	
 	uint8_t state;
 	uint8_t seqnum;
-	size_t windowSize;
+	size_t window_size;
 } state_t;
 
 enum {
@@ -82,7 +89,7 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags);
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags);
 
 ssize_t maybe_sendto(int s, const void *buf, size_t len, int flags, const sockaddr *to, socklen_t tolen);
-ssize_t maybe_recvfrom(int s, char *buf, size_t len, int flags, sockaddr *from, socklen_t *fromlen);
+ssize_t maybe_recvfrom(int s, void *buf, size_t len, int flags, sockaddr *from, socklen_t *fromlen);
 
 uint16_t checksum(uint16_t *buf, int nwords);
 
