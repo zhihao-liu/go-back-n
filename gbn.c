@@ -3,6 +3,10 @@
 state_t s;
 
 /* Static helper functions */
+static uint8_t next(uint8_t seqnum) {
+	return seqnum + 1;
+}
+
 static uint16_t checksum_packet(const gbnhdr *packet) {
 	uint8_t buf[DATALEN + 2];
 	buf[0] = packet->type;
@@ -38,22 +42,22 @@ static int recv_synack(int sockfd) {
 
 	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 		if (errno == EINTR) {
-			printf("WARN: Timeout waiting for SYNACK %d\n", s.seqnum + 1);
+			printf("WARN: Timeout waiting for SYNACK %d\n", next(s.seqnum));
 			s.state = SYN_WAIT;
 			errno = 0;
 			return 0;
 		} else {
-			printf("ERROR: Unknown error receiving SYNACK %d\n", s.seqnum + 1);
+			printf("ERROR: Unknown error receiving SYNACK %d\n", next(s.seqnum));
 			return -1;
 		}
 	}
 
-	if (!validate(&pac) || pac.type != SYNACK || pac.seqnum != s.seqnum + 1) {
+	if (!validate(&pac) || pac.type != SYNACK || pac.seqnum != next(s.seqnum)) {
 		/* Expected SYNACK not received, maintain current state to retry */
 		return 0;
 	}
 
-	printf("SYNACK %d successfully received\n", s.seqnum + 1);
+	printf("SYNACK %d successfully received\n", next(s.seqnum));
 	printf("Connection Established\n");
 	s.state = ESTABLISHED;
 	++s.seqnum;
@@ -95,6 +99,22 @@ static int send_synack(int sockfd) {
 	return 0;
 }
 
+static size_t make_window(gbnhdr* window, const void *buf, size_t len, int offset) {
+	size_t n = 0;
+	for (; n < s.window_size && offset < len; ++n) {
+		gbnhdr *pac = &window[n];
+
+		pac->seqnum = s.seqnum + n;
+		pac->data_len = MIN(DATALEN, len - offset);
+		memcpy(pac->data, buf + offset, pac->data_len);
+		pac->checksum = checksum_packet(pac);
+
+		offset += pac->data_len;
+	}
+
+	return n;
+}
+
 static int send_window(int sockfd, const gbnhdr *window, size_t n) {
 	size_t i;
 	for (i = 0; i < n; ++i) {
@@ -114,17 +134,22 @@ static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
 	int n_ack = 0;
 	gbnhdr pac;
 
-	size_t i;
-	for (i = 0; i < n; ++i) {
+	while (n_ack < n) {
 		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
-			printf("ERROR: Unknown error receiving packet");
+			if (errno == EINTR) {
+				printf("WARN: Timeout waiting for ACK %d\n", next(s.seqnum));
+				return n_ack;
+			} else {
+				printf("ERROR: Unknown error receiving ACK\n");
+				return -1;
+			}
 		}
 
-		if (pac.seqnum == s.seqnum + 1) {
-			++n_ack;
-			++s.seqnum;
-			*offset += pac.data_len;
-		}
+		if (!validate(&pac) || pac.type != DATAACK || pac.seqnum != next(s.seqnum)) continue;
+
+		++n_ack;
+		++s.seqnum;
+		*offset += pac.data_len;
 	}
 
 	alarm(0);
@@ -163,19 +188,17 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 	 *       about getting more than N * DATALEN.
 	 */
 
-	gbnhdr window[s.window_size];
+	gbnhdr window[MAX_WINDOW];
+	size_t i;
+	for (i = 0; i < MAX_WINDOW; ++i) {
+		window[i].type = DATA;
+	}
+
+	s.window_size = 1;
 	size_t offset = 0;
 
 	while (offset < len) {
-		size_t n = 0;
-		size_t sent_offset = offset;
-		for (; n < s.window_size && sent_offset < len; ++n) {
-			gbnhdr *pac = &window[n];
-			pac->seqnum = s.seqnum + n;
-			pac->data_len = MIN(DATALEN, len - offset);
-			memcpy(pac->data, buf + sent_offset, pac->data_len);
-			sent_offset += pac->data_len;
-		}
+		size_t n = make_window(window, buf, len, offset);
 
 		if (send_window(sockfd, window, n) == -1) return -1;
 
@@ -188,14 +211,41 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 		}
 	}
 
-	return 0;
+	return len;
 }
 
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
+	/* Your code here. */
+	gbnhdr pac;
+	gbnhdr ack_pac = {DATAACK};
 
-	/* TODO: Your code here. */
+	bool received = false;
+	while (!received) {
+		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
+			printf("ERROR: Unknown error receiving packet\n");
+			return -1;
+		}
 
-	return(-1);
+		if (!validate(&pac) || pac.type != DATA) {
+			continue;
+		}
+
+		if (pac.seqnum == s.seqnum) {
+			printf("Packet %d received\n", s.seqnum);
+			received = true;
+			++s.seqnum;
+		}
+
+		ack_pac.seqnum = s.seqnum;
+		ack_pac.checksum = checksum_packet(&ack_pac);
+		if (maybe_sendto(sockfd, &ack_pac, sizeof(ack_pac), 0, &s.remote, s.socklen) == -1) {
+			printf("ERROR: Unknown error sending ACK %d\n", s.seqnum);
+			return -1;
+		}
+	}
+
+	memcpy(buf, pac.data, pac.data_len);
+	return pac.data_len;
 }
 
 int gbn_close(int sockfd) {
@@ -258,7 +308,6 @@ int gbn_socket(int domain, int type, int protocol) {
     siginterrupt(SIGALRM, 1);
 
 	s.state = CLOSED;
-	s.window_size = 1;
 
 	return socket(domain, type, protocol);
 }

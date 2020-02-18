@@ -35,7 +35,7 @@ extern int errno;
 #define N         1024    /* max number of packets a single call to gbn_send can process */
 #define TIMEOUT      1    /* timeout to resend packets (1 second)        */
 #define MAX_CONN    10    /* max number of connection attempts           */
-#define MAX_WINDOW  32    /* max window size							 */
+#define MAX_WINDOW   1    /* max window size							 */
 
 /*----- Packet types -----*/
 #define EMPTY   -1
