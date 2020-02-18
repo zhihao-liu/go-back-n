@@ -27,7 +27,7 @@ extern int h_errno;
 extern int errno;
 
 /*----- Debugging flag for logging -----*/
-#define DEBUG 0
+/* #define DEBUG 0 */
 
 /*----- Protocol parameters -----*/
 #define LOSS_PROB 1e-2    /* loss probability												*/
@@ -36,7 +36,7 @@ extern int errno;
 #define N         1024    /* max number of packets a single call to gbn_send can process 	*/
 #define TIMEOUT      1    /* timeout to resend packets (1 second)        					*/
 #define MAX_CONN     5    /* max number of connection/disconnection attempts           		*/
-#define MAX_WINDOW  32	  /* max window size							 					*/
+#define MAX_WINDOW   8	  /* max window size							 					*/
 
 /*----- Packet types -----*/
 #define EMPTY   -1
@@ -65,6 +65,7 @@ typedef struct state_t {
 	uint8_t state;
 	uint8_t seqnum;
 	size_t window_size;
+	size_t total_bytes;
 } state_t;
 
 enum {

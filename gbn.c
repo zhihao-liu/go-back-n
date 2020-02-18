@@ -42,7 +42,10 @@ static int recv_synack(int sockfd) {
 
 	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 		if (errno == EINTR) {
-			printf("WARN: Timeout waiting for SYNACK %d\n", next(s.seqnum));
+			#ifdef DEBUG
+			printf("DEBUG: Timeout waiting for SYNACK %d\n", next(s.seqnum));
+			#endif
+
 			s.state = SYN_WAIT;
 			errno = 0;
 			return 0;
@@ -119,7 +122,10 @@ static int recv_finack(int sockfd) {
 
 	if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 		if (errno == EINTR) {
-			printf("WARN: Timeout waiting for FINACK %d\n", next(s.seqnum));
+			#ifdef DEBUG
+			printf("DEBUG: Timeout waiting for FINACK %d\n", next(s.seqnum));
+			#endif
+
 			s.state = ESTABLISHED;
 			errno = 0;
 			return 0;
@@ -178,7 +184,10 @@ static int recv_window_ack(int sockfd, size_t n, size_t *offset, size_t len) {
 	while (n_ack < n) {
 		if (maybe_recvfrom(sockfd, &pac, sizeof(pac), 0, &s.remote, &s.socklen) == -1) {
 			if (errno == EINTR) {
-				printf("WARN: Timeout waiting for ACK %d\n", next(s.seqnum));
+				#ifdef DEBUG
+				printf("DEBUG: Timeout waiting for ACK %d\n", next(s.seqnum));
+				#endif
+
 				return n_ack;
 			} else {
 				printf("ERROR: Unknown error receiving ACK\n");
@@ -254,6 +263,7 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 		}
 	}
 
+	printf("%lu bytes received...\n", s.total_bytes += len);
 	return len;
 }
 
@@ -279,7 +289,10 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 		if (pac.type != DATA) continue;
 
 		if (pac.seqnum == s.seqnum) {
-			printf("Packet %d received\n", s.seqnum);
+			#ifdef DEBUG
+			printf("DEBUG: Packet %d received\n", s.seqnum);
+			#endif
+
 			received = TRUE;
 			++s.seqnum;
 		}
@@ -305,6 +318,7 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 		return 0;
 	}
 
+	printf("%lu bytes received...\n", s.total_bytes += len);
 	memcpy(buf, pac.data, pac.data_len);
 	return pac.data_len;
 }
