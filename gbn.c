@@ -171,7 +171,7 @@ static int send_window(int sockfd, const gbnhdr *window, size_t n) {
 	return n;
 }
 
-static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
+static int recv_window_ack(int sockfd, size_t n, size_t *offset, size_t len) {
 	int n_ack = 0;
 	gbnhdr pac = {EMPTY,};
 
@@ -188,11 +188,12 @@ static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
 
 		if (!validate(&pac) || pac.type != DATAACK) continue;
 
-		++n_ack;
-		if ((uint8_t)(pac.seqnum - s.seqnum) <= MAX_WINDOW) {
-			s.seqnum = pac.seqnum;
-		}
-		*offset += pac.data_len;
+		uint8_t ack_offset = pac.seqnum - s.seqnum;
+		if (ack_offset > s.window_size) continue;
+
+		n_ack += ack_offset;
+		s.seqnum = pac.seqnum;
+		*offset += MIN(DATALEN * ack_offset, len - *offset);
 	}
 
 	alarm(0);
@@ -237,7 +238,6 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 		window[i].type = DATA;
 	}
 
-	s.window_size = 1;
 	size_t offset = 0;
 
 	while (offset < len) {
@@ -245,7 +245,7 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 
 		if (send_window(sockfd, window, n) == -1) return -1;
 
-		int n_ack = recv_window_ack(sockfd, n, &offset);
+		int n_ack = recv_window_ack(sockfd, n, &offset, len);
 		if (n_ack == -1) return -1;
 		if (n_ack == n) {
 			speed_up();
@@ -285,7 +285,6 @@ ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags) {
 		}
 
 		ack_pac.seqnum = s.seqnum;
-		ack_pac.data_len = pac.data_len;
 		ack_pac.checksum = checksum_packet(&ack_pac);
 		if (maybe_sendto(sockfd, &ack_pac, sizeof(ack_pac), 0, &s.remote, s.socklen) == -1) {
 			printf("ERROR: Unknown error sending ACK %d\n", s.seqnum);
@@ -349,6 +348,7 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	s.remote = *server;
 	s.socklen = socklen;
 	s.state = SYN_WAIT;
+	s.window_size = 1;
 	int attempts = 0;
 
 	while (s.state != ESTABLISHED) {
