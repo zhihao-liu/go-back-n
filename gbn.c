@@ -4,7 +4,7 @@ state_t s;
 
 /* Static helper functions */
 static uint8_t next(uint8_t seqnum) {
-	return seqnum + 1;
+	return ++seqnum;
 }
 
 static uint16_t checksum_packet(const gbnhdr *packet) {
@@ -186,10 +186,12 @@ static int recv_window_ack(int sockfd, size_t n, size_t *offset) {
 			}
 		}
 
-		if (!validate(&pac) || pac.type != DATAACK || pac.seqnum != next(s.seqnum)) continue;
+		if (!validate(&pac) || pac.type != DATAACK) continue;
 
 		++n_ack;
-		++s.seqnum;
+		if ((uint8_t)(pac.seqnum - s.seqnum) <= MAX_WINDOW) {
+			s.seqnum = pac.seqnum;
+		}
 		*offset += pac.data_len;
 	}
 
