@@ -263,13 +263,13 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags) {
 			slow_down();
 		}
 
-		if (n_ack == 0 && ++attempts >= MAX_ATTEMPTS) {
+		if (n_ack == 0 && ++attempts >= MAX_SEND) {
 			printf("ERROR: Exceeded maximum number of attempts to resend data\n");
 			return -1;
 		}
 	}
 
-	printf("%lu bytes received...\n", s.total_bytes += len);
+	printf("%lu bytes sent...\n", s.total_bytes += len);
 	return len;
 }
 
@@ -337,7 +337,7 @@ int gbn_close(int sockfd) {
 		while (s.state != CLOSED) {
 			switch (s.state) {
 				case ESTABLISHED: {
-					if (++attempts > MAX_ATTEMPTS) {
+					if (++attempts > MAX_CONN) {
 						printf("ERROR: Exceeded maximum number of disconnection attempts\n");
 						return -1;
 					};
@@ -374,7 +374,7 @@ int gbn_connect(int sockfd, const sockaddr *server, socklen_t socklen) {
 	while (s.state != ESTABLISHED) {
 		switch (s.state) {
 			case SYN_WAIT: {
-				if (++attempts > MAX_ATTEMPTS) {
+				if (++attempts > MAX_CONN) {
 					printf("ERROR: Exceeded maximum number of connection attempts\n");
 					return -1;
 				};
